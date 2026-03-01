@@ -215,10 +215,6 @@ Never use `zod` or external validation libraries unless they're listed in `depen
   "type": "module",
   "description": "What it does",
   "exports": { ".": "./index.ts" },
-  "dependencies": {},
-  "devDependencies": {
-    "openclaw": "^2026.0.0"
-  },
   "openclaw": {
     "extensions": ["./index.ts"]
   }
@@ -228,6 +224,6 @@ Never use `zod` or external validation libraries unless they're listed in `depen
 Notes:
 - `"type": "module"` is required for ESM plugins
 - `exports` is needed for npm consumers to resolve the entry
-- `openclaw` should be in `devDependencies` (not dependencies) — resolved via jiti alias at runtime
-- `workspace:*` in devDependencies is for monorepo development only; use a version range for standalone packages
-- **Never** add `openclaw` to `dependencies` (creates circular/redundant dep at install time)
+- **Do NOT add `openclaw` to devDependencies.** `import type { OpenClawPluginApi } from "openclaw/plugin-sdk"` is a type-only import — jiti strips it at runtime and never resolves the module. Adding `openclaw` as a devDep forces unnecessary large installs.
+- For monorepo extensions (inside the openclaw repo): use `"openclaw": "workspace:*"` in devDependencies to get types during development. For standalone plugins outside the monorepo: omit it entirely.
+- **Never** add `openclaw` to `dependencies`.

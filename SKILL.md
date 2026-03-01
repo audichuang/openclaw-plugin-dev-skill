@@ -72,9 +72,6 @@ For **npm publishing**, remove `private: true` and add `exports`:
   "version": "1.0.0",
   "type": "module",
   "exports": { ".": "./index.ts" },
-  "devDependencies": {
-    "openclaw": "^2026.0.0"
-  },
   "openclaw": {
     "extensions": ["./index.ts"]
   }
