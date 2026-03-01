@@ -2,6 +2,39 @@
 
 > Source of truth: `src/plugins/types.ts` in the openclaw repo.
 
+---
+
+## Naming Convention: npm Package Name vs Manifest `id`
+
+These two names are **independent** and can differ:
+
+| | Where it appears | Example |
+|---|---|---|
+| **npm package name** | `package.json` `name`, `npm publish`, `openclaw plugins install` | `openclaw-telegram-files` |
+| **manifest id** | `openclaw.plugin.json` `id`, config keys, `openclaw plugins list` | `telegram-files` |
+
+**Rules:**
+- `openclaw plugins install <npm-package-name>` — use the npm name here
+- `plugins.entries.<manifest-id>.config.*` — config keys always use the **manifest id**
+- `openclaw plugins uninstall <manifest-id>` — uninstall uses the manifest id
+- `openclaw plugins info <manifest-id>` — same
+
+**Real example (`openclaw-telegram-files`):**
+```bash
+# Install using npm package name:
+openclaw plugins install openclaw-telegram-files --pin
+
+# Configure using manifest id:
+openclaw config set plugins.entries.telegram-files.config.externalUrl "https://..."
+
+# Uninstall using manifest id:
+openclaw plugins uninstall telegram-files
+```
+
+**Convention:** prefix the npm package name with `openclaw-` to avoid collisions, while keeping the manifest id short (without the prefix). This is the standard pattern used by official plugins.
+
+---
+
 ## Directory Layout
 
 ```
