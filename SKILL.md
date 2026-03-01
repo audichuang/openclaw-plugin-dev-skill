@@ -115,8 +115,7 @@ export default plugin;
 | Wrong | Correct |
 |-------|---------|
 | `export default function register(api)` | `export default plugin` (object) |
-| Hand-writing `type OpenClawPluginApi = {...}` | `import type { OpenClawPluginApi } from "openclaw/plugin-sdk"` |
-| No `openclaw` in devDependencies | Add `"openclaw": "workspace:*"` (monorepo) or `"openclaw": "^2026.x.x"` (standalone) |
+| Hand-writing `type OpenClawPluginApi = {...}` | `import type { OpenClawPluginApi } from "openclaw/plugin-sdk"` (jiti strips it at runtime — no dep needed) |
 | `private: true` in publishable package | Remove `private` for npm-published plugins |
 | Missing `exports` field | Add `"exports": { ".": "./index.ts" }` for npm |
 
@@ -125,6 +124,9 @@ export default plugin;
 ## Plugin API Cheatsheet
 
 ```ts
+import { Type } from "@sinclair/typebox";
+import type { AnyAgentTool } from "openclaw/plugin-sdk";
+
 // Register a bot command (e.g. /files)
 api.registerCommand({
   name: "files",
@@ -132,17 +134,27 @@ api.registerCommand({
   handler: async (ctx) => ({ text: "..." }),
 });
 
-// Register an agent tool
+// Register an agent tool (TypeBox parameters, execute signature)
 api.registerTool({
   name: "read_file",
+  label: "Read File",
   description: "Read a file",
-  inputSchema: { type: "object", properties: { path: { type: "string" } } },
-  handler: async ({ path }) => ({ content: "..." }),
-});
+  parameters: Type.Object({
+    path: Type.String({ description: "File path" }),
+  }),
+  async execute(_toolCallId, params) {
+    const { path } = params as { path: string };
+    return { content: [{ type: "text", text: `contents of ${path}` }] };
+  },
+} as AnyAgentTool);
 
 // Register an HTTP route on the gateway
-api.registerHttpHandler("GET", "/api/ls", async (req, res) => {
-  res.json({ files: [] });
+api.registerHttpRoute({
+  path: "/api/ls",
+  handler: async (req, res) => {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ files: [] }));
+  },
 });
 
 // Hook into the event pipeline

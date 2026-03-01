@@ -1,5 +1,7 @@
 # Plugin Structure & API Reference
 
+> Source of truth: `src/plugins/types.ts` in the openclaw repo.
+
 ## Directory Layout
 
 ```
@@ -12,10 +14,9 @@ my-plugin/
 │   ├── commands.ts          ← bot command handlers
 │   ├── tools.ts             ← agent tool handlers
 │   ├── hooks.ts             ← event hook handlers
-│   ├── api-handlers.ts      ← HTTP route handlers (if needed)
-│   └── runtime.ts           ← runtime bridge (store api.runtime ref)
-├── dist/                    ← built assets (webapp, etc.)
-└── webapp/                  ← frontend Mini App (if applicable)
+│   ├── api-handlers.ts      ← HTTP route handlers
+│   └── runtime.ts           ← runtime bridge
+└── dist/                    ← built assets if needed
 ```
 
 ## openclaw.plugin.json Fields
@@ -23,146 +24,281 @@ my-plugin/
 | Field | Required | Description |
 |-------|----------|-------------|
 | `id` | ✅ | Canonical plugin id. Used as config key. |
-| `configSchema` | ✅ | JSON Schema for plugin config. |
+| `configSchema` | ✅ | Inline JSON Schema for plugin config. |
 | `name` | optional | Display name. |
 | `description` | optional | Short summary. |
 | `version` | optional | Informational version string. |
 | `channels` | optional | Channel ids registered by this plugin. |
 | `providers` | optional | Provider ids registered by this plugin. |
 | `skills` | optional | Skill directories to load (relative paths). |
-| `uiHints` | optional | UI labels/placeholders for config fields. |
-| `kind` | optional | Plugin kind, e.g. `"memory"`. |
+| `uiHints` | optional | UI labels/placeholders/sensitive flags per config field. |
+| `kind` | optional | Plugin kind — only valid value is `"memory"`. |
 
-**configSchema** must be a valid JSON Schema. Even if the plugin takes no config, include:
+**configSchema** must be a valid JSON Schema. Empty plugin:
 ```json
 { "type": "object", "additionalProperties": false, "properties": {} }
 ```
 
-## Plugin Object Interface
+---
+
+## Plugin Object Interface (`OpenClawPluginDefinition`)
 
 ```ts
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 
 const plugin = {
-  id: "my-plugin",           // must match openclaw.plugin.json id
+  id: "my-plugin",           // should match openclaw.plugin.json id
   name: "My Plugin",
   description: "...",
+  version: "1.0.0",          // optional
+  kind: "memory" as const,   // optional, only for memory-slot plugins
+
+  // Optional: parse config in plugin object (alternative: parse manually in register())
   configSchema: {
     parse(value: unknown): MyConfig {
-      // parse and validate config; return typed config object
-      // called at gateway startup with plugins.entries.<id>.config value
+      // validate + return typed config
     },
   },
+
   register(api: OpenClawPluginApi): void {
-    // called once at plugin load time
-    // register commands, tools, hooks, HTTP handlers here
+    // all registration happens here
   },
 };
 
 export default plugin;
 ```
 
-## OpenClawPluginApi Methods
+Both function-style and object-style exports work:
+```ts
+// Also valid (OpenClawPluginModule supports both):
+export default function register(api: OpenClawPluginApi) { ... }
+export default plugin  // ← preferred (enables kind, configSchema, etc.)
+```
 
-### Commands
+---
+
+## Config Parsing (Two Patterns)
+
+**Pattern A — in `configSchema.parse` (plugin object):**
+```ts
+configSchema: {
+  parse(value: unknown) {
+    const raw = (value && typeof value === "object" && !Array.isArray(value))
+      ? (value as Record<string, unknown>) : {};
+    return {
+      externalUrl: typeof raw.externalUrl === "string" ? raw.externalUrl : undefined,
+    };
+  },
+},
+register(api: OpenClawPluginApi) {
+  const config = api.pluginConfig as ReturnType<typeof plugin.configSchema.parse>;
+}
+```
+
+**Pattern B — manually in `register()` (used by memory-lancedb-pro):**
+```ts
+register(api: OpenClawPluginApi) {
+  const config = parseMyConfig(api.pluginConfig); // your own function
+}
+```
+
+Both are correct. Pattern A makes the config typed and validated early; Pattern B is more flexible.
+
+---
+
+## `OpenClawPluginApi` — All Methods
+
+### `registerTool`
+
+Tools use **TypeBox** for parameter schemas. Import `Type` from `@sinclair/typebox` and `AnyAgentTool` from the sdk.
+
+```ts
+import { Type } from "@sinclair/typebox";
+import type { AnyAgentTool, OpenClawPluginApi } from "openclaw/plugin-sdk";
+import { stringEnum } from "openclaw/plugin-sdk"; // for string enums
+
+api.registerTool({
+  name: "my_tool",
+  label: "My Tool",            // display name shown in UI
+  description: "What it does",
+  parameters: Type.Object({
+    query: Type.String({ description: "Search query" }),
+    limit: Type.Optional(Type.Number({ description: "Max results" })),
+    category: Type.Optional(stringEnum(["fact", "preference", "decision"] as const)),
+  }),
+  async execute(_toolCallId, params) {
+    const { query, limit = 5 } = params as { query: string; limit?: number };
+    return {
+      content: [{ type: "text", text: `Result for: ${query}` }],
+      details: { count: 1 },  // optional structured data
+    };
+  },
+} as AnyAgentTool);
+```
+
+Optional second arg pins the tool name:
+```ts
+api.registerTool(myTool, { name: "my_tool" });
+// or for multiple names:
+api.registerTool(toolFactory, { names: ["tool_a", "tool_b"] });
+```
+
+### `registerCommand`
+
+Register a bot command (e.g. `/files`). Bypasses the LLM — use for simple state/status operations.
 
 ```ts
 api.registerCommand({
-  name: "files",              // becomes /files in chat
-  description: "Short help text shown in /help",
-  acceptsArgs: true,          // true if command takes text after it
-  requireAuth: false,         // true to require pairing auth
+  name: "files",                // becomes /files in chat
+  description: "Open file manager",
+  acceptsArgs: true,            // true if command takes text after it
+  requireAuth: true,            // default true; false = anyone can use
   handler: async (ctx) => {
     // ctx.args — string after command name
-    // ctx.accountId — sender's account id
+    // ctx.config — current OpenClawConfig
+    // ctx.channel — "telegram", "discord", etc.
+    // ctx.from, ctx.to, ctx.accountId
     return { text: "Reply text" };
-    // or: return { text: "...", buttons: [...] }  (Telegram Mini App button)
+    // Telegram buttons: return { text: "...", webAppUrl: "https://..." }
   },
 });
 ```
 
-### Agent Tools
+### `registerHttpRoute` / `registerHttpHandler`
 
 ```ts
-api.registerTool({
-  name: "read_workspace_file",
-  description: "Read a file from the workspace",
-  inputSchema: {
-    type: "object",
-    required: ["path"],
-    properties: {
-      path: { type: "string", description: "File path to read" },
-    },
-  },
-  handler: async (input) => {
-    const { path } = input as { path: string };
-    // return tool result
-    return { content: "file contents..." };
+// Preferred: named route (path is relative to plugin's base path)
+api.registerHttpRoute({
+  path: "/api/ls",
+  handler: async (req, res) => {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ files: [] }));
   },
 });
-```
 
-### HTTP Handlers
-
-```ts
-// Mount under /plugins/<plugin-id>/
-api.registerHttpHandler("GET", "/api/ls", async (req, res) => {
-  res.json({ files: [] });
-});
-
-api.registerHttpHandler("POST", "/api/write", async (req, res) => {
-  const { path, content } = req.body;
-  res.json({ ok: true });
+// Legacy: no path, catches all requests to plugin's HTTP space
+api.registerHttpHandler(async (req, res) => {
+  if (req.url?.includes("/api/ls")) { ... }
+  return false; // return false to pass through
 });
 ```
 
-### Event Hooks
+### `on` — Typed Lifecycle Hooks
 
 ```ts
-// Intercept prompt before it goes to the AI
-api.on("before_prompt_build", (event: { prompt: string }) => {
-  // return { prependContext: "..." } to inject context
-  // return undefined to pass through unchanged
-  return undefined;
+// All valid hook names:
+// "before_model_resolve" | "before_prompt_build" | "before_agent_start"
+// "llm_input" | "llm_output" | "agent_end"
+// "before_compaction" | "after_compaction" | "before_reset"
+// "message_received" | "message_sending" | "message_sent"
+// "before_tool_call" | "after_tool_call" | "tool_result_persist"
+// "before_message_write" | "session_start" | "session_end"
+// "subagent_spawning" | "subagent_delivery_target" | "subagent_spawned" | "subagent_ended"
+// "gateway_start" | "gateway_stop"
+
+// Inject context before agent runs:
+api.on("before_prompt_build", (event, ctx) => {
+  // event.prompt, event.messages
+  // ctx.agentId, ctx.sessionKey
+  return { prependContext: "<memories>...</memories>" };
+});
+
+// Override model per-request:
+api.on("before_model_resolve", (event, ctx) => {
+  return { modelOverride: "claude-haiku-4-5" };
+});
+
+// React after agent finishes:
+api.on("agent_end", async (event, ctx) => {
+  // event.messages, event.success, event.durationMs
 });
 ```
 
-### Runtime Helpers
+### `registerHook` — Untyped Hook (for non-standard events)
 
 ```ts
-// Access gateway runtime (logger, config, etc.)
-const runtime = api.runtime;
-
-// TTS (telephony)
-const audio = await api.runtime.tts.textToSpeechTelephony({
-  text: "Hello",
-  cfg: api.config,
+// For custom/internal events not in PluginHookName:
+api.registerHook("command:new", async (event) => {
+  // handle /new command
 });
-
-// Logger
-api.logger.info("Plugin started");
-api.logger.error("Something failed");
 ```
 
-### Plugin Config
+Use `on()` for standard events (type-safe). Use `registerHook()` only for custom event strings.
+
+### `registerService` — Background Services
 
 ```ts
-// Access parsed config (after configSchema.parse())
-const config = api.pluginConfig as MyConfig;
+api.registerService({
+  id: "my-service",
+  start: async (ctx) => {
+    // ctx.config, ctx.workspaceDir, ctx.stateDir, ctx.logger
+    // Start timers, connections, etc.
+    // Do NOT await slow startup here — use setTimeout(..., 0) to avoid blocking gateway
+    setTimeout(() => void runStartupChecks(), 0);
+  },
+  stop: async (ctx) => {
+    // Clean up timers and connections
+  },
+});
 ```
+
+### `registerCli` — CLI Commands
+
+```ts
+import type { Command } from "commander";
+
+api.registerCli((ctx) => {
+  // ctx.program — commander Command instance
+  // ctx.config, ctx.workspaceDir, ctx.logger
+  ctx.program
+    .command("memory-pro list")
+    .description("List memories")
+    .action(async () => { ... });
+}, { commands: ["memory-pro"] });
+```
+
+### `registerChannel`
+
+```ts
+api.registerChannel({ plugin: myChannelPlugin, dock: myDock });
+// or shorthand:
+api.registerChannel(myChannelPlugin);
+```
+
+### `registerProvider`
+
+```ts
+api.registerProvider({
+  id: "my-provider",
+  label: "My LLM Provider",
+  auth: [{ id: "api_key", label: "API Key", kind: "api_key", run: async (ctx) => { ... } }],
+});
+```
+
+### Other helpers
+
+```ts
+api.resolvePath("~/some/path");  // resolves ~ and relative paths
+api.config;                       // current OpenClawConfig
+api.pluginConfig;                 // raw plugin config from openclaw.json
+api.runtime;                      // PluginRuntime (TTS, etc.)
+api.logger.debug("...");          // debug? (optional)
+api.logger.info("...");
+api.logger.warn("...");
+api.logger.error("...");
+```
+
+---
 
 ## Runtime Bridge Pattern
 
-For plugins with multiple files, use a runtime bridge so all modules can access the API:
+For plugins with multiple files, store the API ref so all modules can access it:
 
 ```ts
 // src/runtime.ts
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 let _api: OpenClawPluginApi | null = null;
-
-export function setRuntime(api: OpenClawPluginApi) {
-  _api = api;
-}
-
+export function setRuntime(api: OpenClawPluginApi) { _api = api; }
 export function getRuntime(): OpenClawPluginApi {
   if (!_api) throw new Error("Runtime not initialized");
   return _api;
@@ -176,45 +312,28 @@ import { registerAll } from "./src/register.js";
 
 const plugin = {
   id: "my-plugin",
-  // ...
   register(api: OpenClawPluginApi) {
     setRuntime(api);
     registerAll(api);
   },
 };
+export default plugin;
 ```
 
-## Config Schema Best Practices
-
-Keep config parsing in `configSchema.parse()`:
-
-```ts
-configSchema: {
-  parse(value: unknown) {
-    const raw = (value && typeof value === "object" && !Array.isArray(value))
-      ? (value as Record<string, unknown>)
-      : {};
-    return {
-      externalUrl: typeof raw.externalUrl === "string" ? raw.externalUrl : undefined,
-      allowedPaths: Array.isArray(raw.allowedPaths)
-        ? (raw.allowedPaths as unknown[]).filter((p): p is string => typeof p === "string")
-        : [],
-    };
-  },
-},
-```
-
-Never use `zod` or external validation libraries unless they're listed in `dependencies` (not devDependencies).
+---
 
 ## package.json for Standalone (npm-publishable) Plugins
 
 ```json
 {
   "name": "my-openclaw-plugin",
-  "version": "2026.2.17",
+  "version": "1.0.0",
   "type": "module",
   "description": "What it does",
   "exports": { ".": "./index.ts" },
+  "dependencies": {
+    "@sinclair/typebox": "0.34.48"
+  },
   "openclaw": {
     "extensions": ["./index.ts"]
   }
@@ -222,8 +341,21 @@ Never use `zod` or external validation libraries unless they're listed in `depen
 ```
 
 Notes:
-- `"type": "module"` is required for ESM plugins
-- `exports` is needed for npm consumers to resolve the entry
-- **Do NOT add `openclaw` to devDependencies.** `import type { OpenClawPluginApi } from "openclaw/plugin-sdk"` is a type-only import — jiti strips it at runtime and never resolves the module. Adding `openclaw` as a devDep forces unnecessary large installs.
-- For monorepo extensions (inside the openclaw repo): use `"openclaw": "workspace:*"` in devDependencies to get types during development. For standalone plugins outside the monorepo: omit it entirely.
-- **Never** add `openclaw` to `dependencies`.
+- `"type": "module"` required for ESM
+- `exports` needed for npm consumers
+- **Do NOT add `openclaw` to devDependencies** — `import type` from `openclaw/plugin-sdk` is stripped by jiti at runtime
+- For monorepo extensions: `"openclaw": "workspace:*"` in devDeps gives IDE types
+- Real runtime deps (e.g. `@lancedb/lancedb`, `openai`) go in `dependencies`, NOT devDependencies
+- `@sinclair/typebox` must be in `dependencies` if you use `Type.Object(...)` in tools
+- **Never** add `openclaw` to `dependencies`
+
+## Common Pitfalls
+
+| Wrong | Correct |
+|-------|---------|
+| `inputSchema: { type: "object", ... }` | `parameters: Type.Object(...)` with TypeBox |
+| `handler(params)` | `execute(_toolCallId, params)` |
+| `registerHttpHandler("GET", "/path", fn)` | `registerHttpRoute({ path: "/path", handler: fn })` |
+| `export default function register(api)` | `export default plugin` (object) |
+| Hand-writing `type OpenClawPluginApi = {...}` | `import type { OpenClawPluginApi } from "openclaw/plugin-sdk"` |
+| `@sinclair/typebox` in devDependencies | Put in `dependencies` (needed at runtime) |
