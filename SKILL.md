@@ -1,6 +1,6 @@
 ---
-name: openclaw-plugin-dev
-description: Guide for writing, structuring, installing, and publishing OpenClaw plugins. Use this skill whenever the user wants to create a new OpenClaw plugin, fix or improve an existing plugin, publish a plugin to npm, or install a plugin (local, link, or npm). Triggers on: openclaw plugin, openclaw extension, openclaw插件, plugin-sdk, openclaw.plugin.json, plugins install, registerCommand, registerTool, api.on hook, before_prompt_build, openclaw publish.
+name: openclaw-plugin-dev-skill
+description: "Guide for writing, structuring, installing, and publishing OpenClaw plugins. Use this skill whenever the user wants to create a new OpenClaw plugin, fix or improve an existing plugin, publish a plugin to npm, or install a plugin (local, link, or npm). Triggers on: openclaw plugin, openclaw extension, openclaw插件, plugin-sdk, openclaw.plugin.json, plugins install, registerCommand, registerTool, api.on hook, before\_prompt\_build, openclaw publish."
 ---
 
 # OpenClaw Plugin Development
@@ -9,8 +9,8 @@ Covers everything from writing to publishing. Read the relevant reference files 
 
 ## Quick Reference
 
-- **Plugin structure + API** → [references/structure.md](references/structure.md)
-- **Publishing to npm** → [references/publish.md](references/publish.md)
+* **Plugin structure + API** → [references/structure.md](references/structure.md)
+* **Publishing to npm** → [references/publish.md](references/publish.md)
 
 ---
 
@@ -66,6 +66,7 @@ my-plugin/
 ```
 
 For **npm publishing**, remove `private: true` and add `exports`:
+
 ```json
 {
   "name": "my-openclaw-plugin",
@@ -203,9 +204,10 @@ print(json.dumps(d.get('plugins', {}).get('installs', {}), indent=2))
 ```
 
 Key fields to verify:
-- `"source": "npm"` ✅
-- `"integrity"` hash present ✅ (matches npm registry — proves no tampering)
-- `"spec"` includes exact version ✅
+
+* `"source": "npm"` ✅
+* `"integrity"` hash present ✅ (matches npm registry — proves no tampering)
+* `"spec"` includes exact version ✅
 
 ```bash
 # Also confirm the install directory has no .git (would mean it's a git clone)
@@ -216,9 +218,11 @@ openclaw plugins list
 ```
 
 If you see this in the gateway log, the plugin is **not** npm-tracked:
+
 ```
 [plugins] <id>: loaded without install/load-path provenance
 ```
+
 → Uninstall and reinstall from npm. Full steps: [references/publish.md](references/publish.md#replacing-a-localcloned-install-with-npm).
 
 ---
